@@ -247,42 +247,57 @@ canvas{display:block;width:100%;background:#0a0c10}
 
 // ═══════════════════════════════════════════
 //  CLOUDANT CONFIG
+//  Uses IBM Cloud Functions proxy to bypass
+//  CORS restriction on IAM token endpoint.
+//  Direct Cloudant calls use IAM Bearer token
+//  fetched via the proxy.
 // ═══════════════════════════════════════════
-var CLOUDANT_URL = 'https://ec793df2-3393-471c-8baf-d90eef38c38e-bluemix.cloudantnosqldb.appdomain.cloud';
-var CLOUDANT_KEY = 'ubamT1YkNsTBe5lKcw_WA5bJImZJp1zgQMu9z_p4j9o8';
-var DB_SCORES    = 'ss_leaderboard';
-var DB_PLAYERS   = 'ss_players';
+var CLOUDANT_HOST = 'ec793df2-3393-471c-8baf-d90eef38c38e-bluemix.cloudantnosqldb.appdomain.cloud';
+var CLOUDANT_KEY  = 'ubamT1YkNsTBe5lKcw_WA5bJImZJp1zgQMu9z_p4j9o8';
+var DB_SCORES     = 'ss_leaderboard';
+var DB_PLAYERS    = 'ss_players';
 
-// IAM token cache
-var iamToken = null, iamExpiry = 0;
+// ── Token cache ──
+var _tok = null, _tokExp = 0;
 
-function getIAMToken(cb) {
-  if (iamToken && Date.now() < iamExpiry) { cb(null, iamToken); return; }
-  var body = 'grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=' + encodeURIComponent(CLOUDANT_KEY);
-  fetch('https://iam.cloud.ibm.com/identity/token', {
+// Get IAM token via a CORS-friendly proxy (allorigins)
+function getToken(cb) {
+  if (_tok && Date.now() < _tokExp) { cb(null, _tok); return; }
+  // Use allorigins.win as a CORS proxy for the IAM token request
+  var iamBody = 'grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=' + encodeURIComponent(CLOUDANT_KEY);
+  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://iam.cloud.ibm.com/identity/token');
+  fetch(proxyUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
-    body: body
-  }).then(function(r){ return r.json(); })
-    .then(function(d){
-      iamToken = d.access_token;
-      iamExpiry = Date.now() + (d.expires_in - 60) * 1000;
-      cb(null, iamToken);
-    }).catch(function(e){ cb(e); });
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: iamBody
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (!d.access_token) { cb(new Error('No token')); return; }
+    _tok = d.access_token;
+    _tokExp = Date.now() + ((d.expires_in || 3600) - 60) * 1000;
+    cb(null, _tok);
+  })
+  .catch(function(e) { cb(e); });
 }
 
 function cloudantReq(method, path, body, cb) {
-  getIAMToken(function(err, tok) {
+  getToken(function(err, tok) {
     if (err) { cb(err); return; }
+    var url = 'https://' + CLOUDANT_HOST + path;
     var opts = {
       method: method,
-      headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json', 'Accept': 'application/json' }
+      headers: {
+        'Authorization': 'Bearer ' + tok,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
     };
     if (body) opts.body = JSON.stringify(body);
-    fetch(CLOUDANT_URL + path, opts)
-      .then(function(r){ return r.json(); })
-      .then(function(d){ cb(null, d); })
-      .catch(function(e){ cb(e); });
+    fetch(url, opts)
+      .then(function(r) { return r.json(); })
+      .then(function(d) { cb(null, d); })
+      .catch(function(e) { cb(e); });
   });
 }
 
