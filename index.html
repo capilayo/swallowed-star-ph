@@ -322,7 +322,10 @@ function saveScore(playerName, dps, totalDmg, enemy, body, time, cb) {
     ts: new Date().toISOString()
   };
   cloudantReq('POST', '/' + DB_SCORES, doc, function(err, res) {
-    if (cb) cb(err, res);
+    if (err) { if (cb) cb('Network error: ' + err.message); return; }
+    // Cloudant returns {error,reason} on failure
+    if (res && res.error) { if (cb) cb(res.error + ': ' + res.reason); return; }
+    if (cb) cb(null, res);
   });
 }
 
@@ -630,8 +633,14 @@ function showWin() {
   var ss = document.getElementById('saveStatus');
   ss.textContent = '💾 Sine-save ang score...';
   saveScore(playerName || 'Anonymous', dps, gs.dmgDealt, gs.en.nm, BD[gs.cb].name, elapsed.toFixed(0), function(err) {
-    if (err) { ss.textContent = '⚠️ Hindi na-save (offline mode)'; }
-    else      { ss.textContent = '✅ Na-save sa leaderboard!'; }
+    if (err) {
+      ss.style.color = '#ef4444';
+      ss.textContent = '⚠️ Error: ' + err;
+      console.error('Cloudant save error:', err);
+    } else {
+      ss.style.color = '#6ee7b7';
+      ss.textContent = '✅ Na-save sa leaderboard!';
+    }
   });
 }
 
