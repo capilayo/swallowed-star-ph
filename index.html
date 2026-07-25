@@ -313,15 +313,15 @@ function saveScore(playerName, dps, totalDmg, enemy, body, time, cb) {
 
 // Fetch top scores — use _find with a simple selector
 function fetchLeaderboard(cb) {
-  var query = {
-    selector: { type: { '$eq': 'score' } },
-    fields: ['player', 'dps', 'totalDmg', 'enemy', 'body', 'ts'],
-    sort: [{ 'dps': 'desc' }],
-    limit: 10
-  };
-  cloudantReq('POST', '/' + DB_SCORES + '/_find', query, function(err, res) {
-    if (err || !res || !res.docs) { cb([]); return; }
-    cb(res.docs);
+  // Use _all_docs + manual sort to avoid needing a Cloudant index
+  cloudantReq('GET', '/' + DB_SCORES + '/_all_docs?include_docs=true&limit=200', null, function(err, res) {
+    if (err || !res || !res.rows) { cb([]); return; }
+    var docs = res.rows
+      .map(function(r){ return r.doc; })
+      .filter(function(d){ return d && d.type === 'score'; })
+      .sort(function(a, b){ return (b.dps||0) - (a.dps||0); })
+      .slice(0, 10);
+    cb(docs);
   });
 }
 
@@ -816,6 +816,7 @@ function toast(msg) {
 
 // ── Leaderboard UI ──
 function showLeaderboard(fromBtn) {
+  hideAll();
   var list = document.getElementById('lbList');
   list.innerHTML = '<div class="lbload">Nilo-load...</div>';
   document.getElementById('lbScr').classList.remove('hide');
