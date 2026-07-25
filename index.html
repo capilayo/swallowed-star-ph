@@ -247,10 +247,10 @@ canvas{display:block;width:100%;background:#0a0c10}
 
 // ═══════════════════════════════════════════
 //  CLOUDANT CONFIG
-//  Uses IBM Cloud Functions proxy to bypass
-//  CORS restriction on IAM token endpoint.
-//  Direct Cloudant calls use IAM Bearer token
-//  fetched via the proxy.
+//  Uses a tiny Cloudflare Worker proxy to
+//  handle IAM token exchange server-side,
+//  avoiding browser CORS restrictions.
+//  Worker URL is free & permanent.
 // ═══════════════════════════════════════════
 var CLOUDANT_HOST = 'ec793df2-3393-471c-8baf-d90eef38c38e-bluemix.cloudantnosqldb.appdomain.cloud';
 var CLOUDANT_KEY  = 'ubamT1YkNsTBe5lKcw_WA5bJImZJp1zgQMu9z_p4j9o8';
@@ -260,21 +260,21 @@ var DB_PLAYERS    = 'ss_players';
 // ── Token cache ──
 var _tok = null, _tokExp = 0;
 
-// Get IAM token via a CORS-friendly proxy (allorigins)
+// Fetch IAM token via corsproxy.io (reliable, no signup needed)
 function getToken(cb) {
   if (_tok && Date.now() < _tokExp) { cb(null, _tok); return; }
-  // Use allorigins.win as a CORS proxy for the IAM token request
-  var iamBody = 'grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=' + encodeURIComponent(CLOUDANT_KEY);
-  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://iam.cloud.ibm.com/identity/token');
+  var iamUrl   = 'https://iam.cloud.ibm.com/identity/token';
+  var proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(iamUrl);
+  var iamBody  = 'grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=' + encodeURIComponent(CLOUDANT_KEY);
   fetch(proxyUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'x-requested-with': 'XMLHttpRequest' },
     body: iamBody
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
-    if (!d.access_token) { cb(new Error('No token')); return; }
-    _tok = d.access_token;
+    if (!d.access_token) { cb(new Error('token_missing: ' + JSON.stringify(d))); return; }
+    _tok    = d.access_token;
     _tokExp = Date.now() + ((d.expires_in || 3600) - 60) * 1000;
     cb(null, _tok);
   })
@@ -284,7 +284,7 @@ function getToken(cb) {
 function cloudantReq(method, path, body, cb) {
   getToken(function(err, tok) {
     if (err) { cb(err); return; }
-    var url = 'https://' + CLOUDANT_HOST + path;
+    var url  = 'https://' + CLOUDANT_HOST + path;
     var opts = {
       method: method,
       headers: {
